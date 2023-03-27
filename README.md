@@ -1,0 +1,14 @@
+This script has the ability to fetch the California WARN Act listings
+
+https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
+https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx
+
+Other states do this slightly differently, so you will probably need to write
+something completely new to handle them.
+
+Compare:
+* Oregon: https://www.oregon.gov/highered/institutions-programs/workforce/Pages/warn.aspx
+* Washington: https://esd.wa.gov/about-employees/WARN
+* Nevada: https://detr.nv.gov/Page/WARN
+* Texas: https://www.twc.texas.gov/businesses/worker-adjustment-and-retraining-notification-warn-notices
+* Kansas: https://www.kansascommerce.gov/program/workforce-services/warn/
