@@ -7,8 +7,11 @@ Other states do this slightly differently, so you will probably need to write
 something completely new to handle them.
 
 Compare:
+* Florida: https://floridajobs.org/office-directory/division-of-workforce-services/workforce-programs/worker-adjustment-and-retraining-notification-(warn)-act
+* Kansas: https://www.kansascommerce.gov/program/workforce-services/warn/
+  Could potentially check incremental values here and stop when we get a 404 page?
+    https://www.kansasworks.com/search/warn_lookups/2192
 * Oregon: https://www.oregon.gov/highered/institutions-programs/workforce/Pages/warn.aspx
-* Washington: https://esd.wa.gov/about-employees/WARN
 * Nevada: https://detr.nv.gov/Page/WARN
 * Texas: https://www.twc.texas.gov/businesses/worker-adjustment-and-retraining-notification-warn-notices
-* Kansas: https://www.kansascommerce.gov/program/workforce-services/warn/
+* Washington: https://esd.wa.gov/about-employees/WARN
