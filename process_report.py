@@ -6,13 +6,15 @@ import csv
 import datetime
 import hashlib
 import json
-import openpyxl
 import os
 import re
-import requests
 import sys
 
-warn_url = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
+import openpyxl
+import requests
+
+WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
+XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 def parse_options():
     parser = argparse.ArgumentParser(
@@ -68,20 +70,20 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
     if opts.update:
         excl += 1
     if excl > 1:
-        print(f"The options --dump, --fetch, --search, and --update are mutually exclusive.")
+        print("The options --dump, --fetch, --search, and --update are mutually exclusive.")
         sys.exit(1)
     if excl == 0:
         opts.dump = True
     return opts
 
 def load_report(opts):
-    wb = openpyxl.load_workbook(filename=opts.excel, data_only=True)
+    workbook = openpyxl.load_workbook(filename=opts.excel, data_only=True)
 
     # Get All Sheets
-    a_sheet_names = wb.sheetnames
+    a_sheet_names = workbook.sheetnames
     # print(a_sheet_names)
 
-    o_sheet = wb[a_sheet_names[0]]
+    o_sheet = workbook[a_sheet_names[0]]
     # print(o_sheet)
     # print(o_sheet.max_row)
     # print(o_sheet.max_column)
@@ -109,27 +111,26 @@ def load_report(opts):
 # XXX: First sort the rows by Notice Date (primary) and Company (secondary)
 def display_entries(rows, csv_headers):
     headers = {}
-    for col in range(len(csv_headers)):
-        headers[csv_headers[col]] = col
+    for col, header in enumerate(csv_headers):
+        headers[header] = col
+    notice_col = headers["Notice Date"]
     last_notice = None
     for row in rows:
-        notice = row[headers["Notice Date"]]
+        notice = row[notice_col]
         if not last_notice or last_notice != notice:
             print(f"NOTICE DATE: {notice}")
             print()
             last_notice = notice
-        for col in range(len(csv_headers)):
-            if col == headers["Notice Date"]:
+        for col, header in enumerate(csv_headers):
+            if col == notice_col:
                 continue
-            header = csv_headers[col]
             value  = row[col]
             header = header.replace("\n", " ")
             header = header.replace("/ ", "/")
             print(f"  {header:16s} : {value}")
         print()
-    return
 
-def do_dump(opts, o_sheet, headers):
+def do_dump(o_sheet, headers):
     counties = {}
     companies = {}
     for row in range(o_sheet.max_row - 3):
@@ -147,27 +148,25 @@ def do_dump(opts, o_sheet, headers):
         companies[company][action] += employees
     print(json.dumps(counties))
     print(json.dumps(companies))
-    return
 
 def do_fetch(opts):
-    r = requests.get(warn_url)
-    if r.status_code != 200:
-        print(f"Unexpected HTTP status code: {r.status_code}")
+    result = requests.get(WARN_URL)
+    if result.status_code != 200:
+        print(f"Unexpected HTTP status code: {result.status_code}")
         sys.exit(1)
-    if r.headers['content-type'] != 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        print(f"Unexpect content received: {r.headers['content-type']}; {r.encoding}")
+    if result.headers['content-type'] != XLSX_TYPE:
+        print(f"Unexpect content received: {result.headers['content-type']}; {result.encoding}")
         sys.exit(1)
     fname = opts.excel
     tmp_fname = f"{fname}.{os.getpid()}"
     if opts.debug:
         print(f"Creating temporary file {tmp_fname}.")
     with open(tmp_fname, 'wb') as excel:
-        excel.write(r.content)
+        excel.write(result.content)
         excel.close()
     if opts.debug:
         print(f"Renaming {tmp_fname} to {fname}")
     os.rename(tmp_fname, fname)
-    return
 
 def do_search(opts):
     fname = opts.summary
@@ -187,21 +186,19 @@ def do_search(opts):
         sys.exit(1)
 
     headers = {}
-    for col in range(len(csv_headers)):
-        headers[csv_headers[col]] = col
+    for col, header in enumerate(csv_headers):
+        headers[header] = col
     if opts.debug:
         print(f"Searching for {opts.search} among {len(rows)} rows of data.")
     rows_found = []
     for row in rows:
         company = row[headers["Company"]]
-        company_compare = row[4]
         if re.match(opts.search, company):
             rows_found.append(row)
     if len(rows_found) > 0:
         display_entries(rows_found, csv_headers)
     else:
         print("No matching companies found.")
-    return
 
 def do_update(opts, o_sheet, headers):
     fname = opts.summary
@@ -217,10 +214,10 @@ def do_update(opts, o_sheet, headers):
                     csv_headers = row
                 else:
                     rows.append(row)
-                    h = hashlib.sha256()
+                    hashed = hashlib.sha256()
                     for col in row:
-                        h.update(col.encode("utf-8"))
-                    dupes[h.digest()] = True
+                        hashed.update(col.encode("utf-8"))
+                    dupes[hashed.digest()] = True
     except IOError:
         print(f"File {csv} did not exist yet.")
     if csv_headers is None:
@@ -234,7 +231,7 @@ def do_update(opts, o_sheet, headers):
             csv_headers.append(header)
     else:
         if len(csv_headers) != o_sheet.max_column:
-            print(f"Number of columns mismatch between existing data and new data.")
+            print("Number of columns mismatch between existing data and new data.")
             sys.exit(1)
         for header in csv_headers:
             if header not in headers:
@@ -246,7 +243,7 @@ def do_update(opts, o_sheet, headers):
     updates_total = 0
     for row in range(o_sheet.max_row - 3):
         newrow = []
-        h = hashlib.sha256()
+        hashed = hashlib.sha256()
         for header in csv_headers:
             value = o_sheet.cell(row=row+2, column=headers[header]).value
             if isinstance(value, datetime.datetime):
@@ -254,10 +251,10 @@ def do_update(opts, o_sheet, headers):
             else:
                 value = str(value)
             newrow.append(value)
-            h.update(value.encode("utf-8"))
-        d = h.digest()
-        if d not in dupes:
-            dupes[d] = True
+            hashed.update(value.encode("utf-8"))
+        digest = hashed.digest()
+        if digest not in dupes:
+            dupes[digest] = True
             if opts.debug:
                 print(f"New row: {newrow}")
             rows.append(newrow)
@@ -286,14 +283,13 @@ def do_update(opts, o_sheet, headers):
             display_entries(newrows, csv_headers)
         else:
             print("No new entries.")
-    return
 
 def main():
     opts = parse_options()
 
     if opts.dump:
         o_sheet, headers = load_report(opts)
-        return do_dump(opts, o_sheet, headers)
+        return do_dump(o_sheet, headers)
     if opts.fetch:
         return do_fetch(opts)
     if opts.search:
@@ -302,6 +298,7 @@ def main():
         o_sheet, headers = load_report(opts)
         return do_update(opts, o_sheet, headers)
     print("Not Yet Implemented.")
+    return False
 
 if __name__ == "__main__":
     main()
