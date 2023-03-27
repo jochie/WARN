@@ -106,6 +106,29 @@ def load_report(opts):
 
     return o_sheet, headers
 
+# XXX: First sort the rows by Notice Date (primary) and Company (secondary)
+def display_entries(rows, csv_headers):
+    headers = {}
+    for col in range(len(csv_headers)):
+        headers[csv_headers[col]] = col
+    last_notice = None
+    for row in rows:
+        notice = row[headers["Notice Date"]]
+        if not last_notice or last_notice != notice:
+            print(f"NOTICE DATE: {notice}")
+            print()
+            last_notice = notice
+        for col in range(len(csv_headers)):
+            if col == headers["Notice Date"]:
+                continue
+            header = csv_headers[col]
+            value  = row[col]
+            header = header.replace("\n", " ")
+            header = header.replace("/ ", "/")
+            print(f"  {header:16s} : {value}")
+        print()
+    return
+
 def do_dump(opts, o_sheet, headers):
     counties = {}
     companies = {}
@@ -136,12 +159,12 @@ def do_fetch(opts):
         sys.exit(1)
     fname = opts.excel
     tmp_fname = f"{fname}.{os.getpid()}"
-    if opts.verbose:
+    if opts.debug:
         print(f"Creating temporary file {tmp_fname}.")
     with open(tmp_fname, 'wb') as excel:
         excel.write(r.content)
         excel.close()
-    if opts.verbose:
+    if opts.debug:
         print(f"Renaming {tmp_fname} to {fname}")
     os.rename(tmp_fname, fname)
     return
@@ -167,31 +190,17 @@ def do_search(opts):
     for col in range(len(csv_headers)):
         headers[csv_headers[col]] = col
     if opts.debug:
-        print(f"Header mapping: {headers}")
-    if opts.verbose:
         print(f"Searching for {opts.search} among {len(rows)} rows of data.")
-    last_notice = None
+    rows_found = []
     for row in rows:
         company = row[headers["Company"]]
         company_compare = row[4]
-        if opts.debug:
-            print(f"  Company entry: {company} - {company_compare} - {row}")
         if re.match(opts.search, company):
-            notice = row[headers["Notice Date"]]
-            if not last_notice or last_notice != notice:
-                print(f"NOTICE DATE: {notice}")
-                print()
-                last_notice = notice
-            for col in range(len(csv_headers)):
-                if col == headers["Notice Date"]:
-                    continue
-                header = csv_headers[col]
-                value  = row[col]
-                header = header.replace("\n", " ")
-                header = header.replace("/ ", "/")
-                print(f"  {header:16s} : {value}")
-            print()
-    print("DONE.")
+            rows_found.append(row)
+    if len(rows_found) > 0:
+        display_entries(rows_found, csv_headers)
+    else:
+        print("No matching companies found.")
     return
 
 def do_update(opts, o_sheet, headers):
@@ -199,6 +208,7 @@ def do_update(opts, o_sheet, headers):
     csv_headers = None
     rows = []
     dupes = {}
+
     try:
         with open(fname, newline='') as csvfile:
             reader = csv.reader(csvfile)
@@ -231,6 +241,7 @@ def do_update(opts, o_sheet, headers):
                 print(f"Header '{header}' not present in new data.")
                 sys.exit(1)
 
+    newrows = []
     dupes_total = 0
     updates_total = 0
     for row in range(o_sheet.max_row - 3):
@@ -247,9 +258,10 @@ def do_update(opts, o_sheet, headers):
         d = h.digest()
         if d not in dupes:
             dupes[d] = True
-            if opts.verbose:
+            if opts.debug:
                 print(f"New row: {newrow}")
             rows.append(newrow)
+            newrows.append(newrow)
             updates_total += 1
         else:
             dupes_total += 1
@@ -257,7 +269,7 @@ def do_update(opts, o_sheet, headers):
         print(f"{dupes_total} existing rows, {updates_total} new rows.")
     if updates_total > 0:
         tmp_fname = f"{fname}.{os.getpid()}"
-        if opts.verbose:
+        if opts.debug:
             print(f"Creating temporary file {tmp_fname}.")
         with open(tmp_fname, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -265,9 +277,15 @@ def do_update(opts, o_sheet, headers):
             for row in rows:
                 writer.writerow(row)
             csvfile.close()
-        if opts.verbose:
+        if opts.debug:
             print(f"Renaming {tmp_fname} to {fname}")
         os.rename(tmp_fname, fname)
+    if opts.verbose:
+        if len(newrows) > 0:
+            print("New entries:")
+            display_entries(newrows, csv_headers)
+        else:
+            print("No new entries.")
     return
 
 def main():
