@@ -42,6 +42,15 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
     parser.add_argument("--excel",
                         help="Specify an alternative name for 'warn_report.xlsx'",
                         default="warn_report.xlsx")
+    parser.add_argument("--server",
+                        help="Specify an alternative Mastodon server",
+                        default="botsin.space")
+    parser.add_argument("--token",
+                        help="Specify the authorization token. Required for --post option.")
+    parser.add_argument("--post",
+                        help="Post this to Mastodon? Only use with --update.",
+                        default=False,
+                        action='store_true')
 
     # The possible actions:
     parser.add_argument('--dump',
@@ -74,6 +83,12 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
         sys.exit(1)
     if excl == 0:
         opts.dump = True
+    if opts.post and not opts.update:
+        print("The option --post can only be used in combination with --update.")
+        sys.exit(1)
+    if opts.post and not opts.token:
+        print("The option --post requires that you also use the --token option.")
+        sys.exit(1)
     return opts
 
 def load_report(opts):
@@ -109,7 +124,9 @@ def load_report(opts):
     return o_sheet, headers
 
 # XXX: First sort the rows by Notice Date (primary) and Company (secondary)
-def display_entries(rows, csv_headers):
+def dump_entries(rows, csv_headers, align=True):
+    output_list = []
+    output = ""
     headers = {}
     for col, header in enumerate(csv_headers):
         headers[header] = col
@@ -118,8 +135,7 @@ def display_entries(rows, csv_headers):
     for row in rows:
         notice = row[notice_col]
         if not last_notice or last_notice != notice:
-            print(f"NOTICE DATE: {notice}")
-            print()
+            output += f"NOTICE DATE: {notice}\n\n"
             last_notice = notice
         for col, header in enumerate(csv_headers):
             if col == notice_col:
@@ -127,8 +143,13 @@ def display_entries(rows, csv_headers):
             value  = row[col]
             header = header.replace("\n", " ")
             header = header.replace("/ ", "/")
-            print(f"  {header:16s} : {value}")
-        print()
+            if align:
+                output += f"  {header:16s} : {value}\n"
+            else:
+                output += f"{header}: {value}\n"
+        output_list.append(output)
+        output = ""
+    return output_list
 
 def do_dump(o_sheet, headers):
     counties = {}
@@ -196,7 +217,7 @@ def do_search(opts):
         if re.match(opts.search, company):
             rows_found.append(row)
     if len(rows_found) > 0:
-        display_entries(rows_found, csv_headers)
+        print("\n".join(dump_entries(rows_found, csv_headers)))
     else:
         print("No matching companies found.")
 
@@ -280,9 +301,28 @@ def do_update(opts, o_sheet, headers):
     if opts.verbose:
         if len(newrows) > 0:
             print("New entries:")
-            display_entries(newrows, csv_headers)
+            print("\n".join(dump_entries(newrows, csv_headers)))
         else:
             print("No new entries.")
+    if len(newrows) > 0 and opts.post:
+        auth = {'Authorization': f"Bearer {opts.token}"}
+        in_reply_to = None
+        output_list = dump_entries(newrows, csv_headers, False)
+        list_size = len(output_list)
+        for i, output in enumerate(output_list):
+            params = {'status': f"{output}\n({i+1}/{list_size})"}
+            if in_reply_to:
+                params['in_reply_to_id'] = in_reply_to
+            result = requests.post(f"https://{opts.server}/api/v1/statuses",
+                                   data=params, headers=auth)
+            if result.status_code == 200:
+                print(f"Posted {i+1}/{list_size} successfully.")
+                in_reply_to = result.json()['id']
+            else:
+                print(f"Posting failed: {result.status_code}")
+                print(result.text)
+                sys.exit(1)
+
 
 def main():
     opts = parse_options()
