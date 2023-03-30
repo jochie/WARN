@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 
 import openpyxl
 import requests
@@ -312,6 +313,8 @@ def do_update(opts, o_sheet, headers):
         for i, output in enumerate(output_list):
             params = {'status': f"{output}\n({i+1}/{list_size})"}
             if in_reply_to:
+                # Sleep a little, to avoid offending rate limiting rules?
+                time.sleep(5)
                 params['in_reply_to_id'] = in_reply_to
             result = requests.post(f"https://{opts.server}/api/v1/statuses",
                                    data=params, headers=auth)
