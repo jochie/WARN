@@ -10,12 +10,14 @@ import os
 import re
 import sys
 import time
+import urllib3
 
+import boto3
 import openpyxl
-import requests
 
 WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
 XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
 
 def parse_options():
     parser = argparse.ArgumentParser(
@@ -52,6 +54,8 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
                         help="Post this to Mastodon? Only use with --update.",
                         default=False,
                         action='store_true')
+    parser.add_argument("--sqs",
+                        help="Specify the SQS queue to which to post the updates, if any.")
 
     # The possible actions:
     parser.add_argument('--dump',
@@ -92,6 +96,7 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
         sys.exit(1)
     return opts
 
+
 def load_report(opts):
     workbook = openpyxl.load_workbook(filename=opts.excel, data_only=True)
 
@@ -124,6 +129,7 @@ def load_report(opts):
 
     return o_sheet, headers
 
+
 # XXX: First sort the rows by Notice Date (primary) and Company (secondary)
 def dump_entries(rows, csv_headers, align=True):
     output_list = []
@@ -152,6 +158,7 @@ def dump_entries(rows, csv_headers, align=True):
         output = ""
     return output_list
 
+
 def do_dump(o_sheet, headers):
     counties = {}
     companies = {}
@@ -171,10 +178,12 @@ def do_dump(o_sheet, headers):
     print(json.dumps(counties))
     print(json.dumps(companies))
 
+
 def do_fetch(opts):
-    result = requests.get(WARN_URL)
-    if result.status_code != 200:
-        print(f"Unexpected HTTP status code: {result.status_code}")
+    http = urllib3.PoolManager()
+    result = http.request('GET', WARN_URL)
+    if result.status != 200:
+        print(f"Unexpected HTTP status code: {result.status}")
         sys.exit(1)
     if result.headers['content-type'] != XLSX_TYPE:
         print(f"Unexpect content received: {result.headers['content-type']}; {result.encoding}")
@@ -184,11 +193,12 @@ def do_fetch(opts):
     if opts.debug:
         print(f"Creating temporary file {tmp_fname}.")
     with open(tmp_fname, 'wb') as excel:
-        excel.write(result.content)
+        excel.write(result.data)
         excel.close()
     if opts.debug:
         print(f"Renaming {tmp_fname} to {fname}")
     os.rename(tmp_fname, fname)
+
 
 def do_search(opts):
     fname = opts.summary
@@ -221,6 +231,73 @@ def do_search(opts):
         print("\n".join(dump_entries(rows_found, csv_headers)))
     else:
         print("No matching companies found.")
+
+
+def send_to_sqs(opts, output_list, list_size):
+    # Reenable the event source mapping, first:
+    aws_lambda = boto3.client("lambda")
+    esm_uuid = os.environ['ESM_UUID']
+    result = aws_lambda.update_event_source_mapping(
+        UUID=esm_uuid,
+        Enabled=True
+    )
+    print(f"result = {result}")
+
+    sqs = boto3.resource('sqs')
+    queue = sqs.Queue(opts.sqs)
+    queue.send_message(
+        MessageBody=json.dumps(output_list),
+        MessageAttributes={
+            'index': {
+                'DataType': 'Number',
+                'StringValue': '1'
+            },
+            'sqs_url': {
+                'DataType': 'String',
+                'StringValue': opts.sqs
+            },
+            'total': {
+                'DataType': 'Number',
+                'StringValue': str(list_size)
+            },
+            'state_abbr': {
+                'DataType': 'String',
+                'StringValue': 'CA'
+            },
+            'state_name': {
+                'DataType': 'String',
+                'StringValue': 'California'
+            },
+            'esm_uuid': {
+                'DataType': 'String',
+                'StringValue': esm_uuid
+            }
+        },
+        DelaySeconds=10
+    )
+
+
+def send_to_api(opts, output_list, list_size):
+    http = urllib3.PoolManager()
+    auth = {'Authorization': f"Bearer {opts.token}"}
+    in_reply_to = None
+    for i, output in enumerate(output_list):
+        params = {'status': f"{output}\n#Warn #Act #WarnAct #CA #California ({i+1}/{list_size})"}
+        if in_reply_to:
+            # Sleep a little, to avoid offending rate limiting rules?
+            time.sleep(10)
+            params['in_reply_to_id'] = in_reply_to
+        result = http.request('POST', f"https://{opts.server}/api/v1/statuses",
+                              headers=auth,
+                              fiels=params)
+        if result.status == 200:
+            print(f"Posted {i+1}/{list_size} successfully.")
+            in_reply_to = result.json()['id']
+        else:
+            print(f"Posting failed: {result.status}")
+            print(result.data)
+            sys.exit(1)
+
 
 def do_update(opts, o_sheet, headers):
     fname = opts.summary
@@ -306,25 +383,57 @@ def do_update(opts, o_sheet, headers):
         else:
             print("No new entries.")
     if len(newrows) > 0 and opts.post:
-        auth = {'Authorization': f"Bearer {opts.token}"}
-        in_reply_to = None
         output_list = dump_entries(newrows, csv_headers, False)
         list_size = len(output_list)
-        for i, output in enumerate(output_list):
-            params = {'status': f"{output}\n({i+1}/{list_size})"}
-            if in_reply_to:
-                # Sleep a little, to avoid offending rate limiting rules?
-                time.sleep(5)
-                params['in_reply_to_id'] = in_reply_to
-            result = requests.post(f"https://{opts.server}/api/v1/statuses",
-                                   data=params, headers=auth)
-            if result.status_code == 200:
-                print(f"Posted {i+1}/{list_size} successfully.")
-                in_reply_to = result.json()['id']
-            else:
-                print(f"Posting failed: {result.status_code}")
-                print(result.text)
-                sys.exit(1)
+        if opts.sqs:
+            send_to_sqs(opts, output_list, list_size)
+        else:
+            send_to_api(opts, output_list, list_size)
+
+
+# Call from EventBridge, to replace this cron job:
+#
+#  process_report.py --fetch --debug
+#  process_report.py --verbose --update --post --server <server> --token <token>
+#
+# We know that event & lambda_context are unused; '_' prefix avoids complaint
+def report_handler(_event, _lambda_context):
+    s3_name = os.environ['S3_NAME']
+    sqs_url = os.environ['SQS_URL']
+
+    esm_uuid = os.environ['ESM_UUID']
+
+    # Testing:
+    aws_lambda = boto3.client("lambda")
+    result = aws_lambda.get_event_source_mapping(UUID=esm_uuid)
+    print(f"result = {result}")
+    opts = parse_options()
+
+    os.chdir("/tmp")
+    # Download the most recent spreadsheet and CSV file from S3
+    # This should be okay as long as we stay under 512MB in /tmp
+    #
+    # https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html
+    s3_resource = boto3.resource("s3")
+    bucket = s3_resource.Bucket(s3_name)
+    bucket.download_file('CA/warn_report.xlsx', 'warn_report.xlsx')
+    bucket.download_file('CA/summary.csv', 'summary.csv')
+
+    # process_report.py --fetch --debug
+    opts.debug = True
+    do_fetch(opts)
+
+    # process_report.py --update --sqs <sqs_url>
+    opts.debug = False
+    opts.verbose = True
+    opts.post = True
+    opts.sqs = sqs_url
+    o_sheet, headers = load_report(opts)
+    do_update(opts, o_sheet, headers)
+
+    # Upload the (potentially) updated spreadsheet and CSV file to S3
+    bucket.upload_file('warn_report.xlsx', 'CA/warn_report.xlsx')
+    bucket.upload_file('summary.csv', 'CA/summary.csv')
 
 
 def main():
