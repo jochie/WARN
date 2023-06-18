@@ -6,6 +6,7 @@ import csv
 import datetime
 import hashlib
 import json
+from operator import itemgetter
 import os
 import re
 import sys
@@ -130,7 +131,107 @@ def load_report(opts):
     return o_sheet, headers
 
 
-# XXX: First sort the rows by Notice Date (primary) and Company (secondary)
+def update_row_summary(row,
+                       last_company,
+                       last_companies, last_counties, last_addresses, last_effective,
+                       company_col, county_col, address_col, effective_col):
+    if len(last_counties) > 1:
+        row[county_col] = ", ".join(last_counties.keys())
+        row[address_col] = "[Multiple]"
+    else:
+        if len(last_addresses) > 1:
+            row[address_col] = "[Multiple]"
+    if len(last_effective) > 1:
+        dates = list(last_effective.keys())
+        dates.sort()
+        row[effective_col] = f"{dates[0]} - {dates[-1]}"
+    if len(last_companies) > 1:
+        row[company_col] = f"{last_company} [Multiple variations]"
+
+
+# Sort (first by Notice Date and then by Company name) and group the
+# rows by company (or variations thereof), grouping things like
+# multiple different addresses, counties/parishes, and effective
+# dates, # while showing the total number of employees affected.
+#
+# The company name simpification is to handle things like:
+#
+#   "<name> - <#> Building"
+#   "<name> - Layoff <#>"
+#
+# These may or may not be legally distinct units, but they're typically
+# clearly related.
+def group_entries(rows, csv_headers):
+    output_list = []
+
+    headers = {}
+    for col, header in enumerate(csv_headers):
+        header = header.replace("  ", " ")
+        headers[header] = col
+
+    notice_col    = headers["Notice Date"]
+    company_col   = headers["Company"]
+    county_col    = headers["County/Parish"]
+    received_col  = headers['Received Date']
+    effective_col = headers['Effective Date']
+    layoff_col    = headers["Layoff/Closure"]
+    address_col   = headers['Address']
+    employees_col = headers["No. Of Employees"]
+
+    last_row = {}
+    last_company = None
+    last_companies = {}
+    last_counties = {}
+    last_addresses = {}
+    last_effective = {}
+    for row in sorted(rows, key=itemgetter(notice_col, company_col)):
+        eff_company = row[company_col]
+        match_company = re.match(r"^(.*) - (.*)$", eff_company)
+        if match_company:
+            eff_company = match_company.group(1)
+
+        if len(last_row) > 0 and (row[notice_col]   != last_row[notice_col] or
+                                  eff_company       != last_company or
+                                  row[received_col] != last_row[received_col] or
+                                  row[layoff_col]   != last_row[layoff_col]):
+            # We cannot combine this row into the previous one
+            update_row_summary(last_row,
+                               last_company,
+                               last_companies, last_counties, last_addresses, last_effective,
+                               company_col, county_col, address_col, effective_col)
+
+            output_list.append(last_row)
+            last_row = {}
+            # Fall through
+
+        if len(last_row) > 0:
+            # Either because this is the first row, or we cannot combine
+            # this row into the previous one
+            last_row       = row[:] # Copy the content, not the reference
+            last_company   = eff_company
+            last_companies = {last_row[company_col]:   True}
+            last_counties  = {last_row[county_col]:    True}
+            last_addresses = {last_row[address_col]:   True}
+            last_effective = {last_row[effective_col]: True}
+            continue
+
+        # Fold row into last_row
+        last_row[employees_col] = int(last_row[employees_col]) + int(row[employees_col])
+        last_companies[row[company_col]] = True
+        last_counties[row[county_col]] = True
+        last_addresses[row[address_col]] = True
+        last_effective[row[effective_col]] = True
+
+    if last_row:
+        update_row_summary(last_row,
+                           last_company,
+                           last_companies, last_counties, last_addresses, last_effective,
+                           company_col, county_col, address_col, effective_col)
+        output_list.append(last_row)
+
+    return output_list
+
+
 def dump_entries(rows, csv_headers, align=True):
     output_list = []
     output = ""
@@ -139,7 +240,7 @@ def dump_entries(rows, csv_headers, align=True):
         headers[header] = col
     notice_col = headers["Notice Date"]
     last_notice = None
-    for row in rows:
+    for row in group_entries(rows, csv_headers):
         notice = row[notice_col]
         if not last_notice or last_notice != notice:
             output += f"NOTICE DATE: {notice}\n\n"
@@ -150,6 +251,7 @@ def dump_entries(rows, csv_headers, align=True):
             value  = row[col]
             header = header.replace("\n", " ")
             header = header.replace("/ ", "/")
+            header = header.replace("  ", " ")
             if align:
                 output += f"  {header:16s} : {value}\n"
             else:
@@ -327,6 +429,7 @@ def do_update(opts, o_sheet, headers):
             header = o_cell.value
             header = header.replace("\n", " ")
             header = header.replace("/ ", "/")
+            header = header.replace("  ", " ")
             csv_headers.append(header)
     else:
         if len(csv_headers) != o_sheet.max_column:
