@@ -204,7 +204,7 @@ def group_entries(rows, csv_headers):
             last_row = {}
             # Fall through
 
-        if len(last_row) > 0:
+        if len(last_row) == 0:
             # Either because this is the first row, or we cannot combine
             # this row into the previous one
             last_row       = row[:] # Copy the content, not the reference
