@@ -16,7 +16,8 @@ import urllib3
 import boto3
 import openpyxl
 
-WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
+# WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
+WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report1.xlsx'
 XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 
@@ -105,16 +106,28 @@ def load_report(opts):
     a_sheet_names = workbook.sheetnames
     # print(a_sheet_names)
 
-    o_sheet = workbook[a_sheet_names[0]]
+    # Look for "Detailed WARN Report" sheet (actual sheet has an extra space).
+    # If none found, use the first sheet and hope for the best.
+    offset = 0
+    sheet_name = a_sheet_names[0]
+    for name in a_sheet_names:
+        if re.match(r"(?i)detailed warn report", name):
+            sheet_name = name
+            offset = 1
+    if opts.debug:
+        print('Using sheet name <%s>' % (sheet_name,))
+
+    o_sheet = workbook[sheet_name]
     # print(o_sheet)
     # print(o_sheet.max_row)
     # print(o_sheet.max_column)
     headers = {}
     for col in range(o_sheet.max_column):
-        o_cell = o_sheet.cell(row=1, column=col+1)
+        o_cell = o_sheet.cell(row=1+offset, column=col+1)
         header = o_cell.value
         header = header.replace("\n", " ")
         header = header.replace("/ ", "/")
+        header = header.replace("  ", " ")
         headers[header] = col + 1
         # print(f"(1,{col+1}) = {header}")
     if opts.debug:
@@ -128,7 +141,7 @@ def load_report(opts):
         print("Missing Notice Date column, aborting.")
         sys.exit(1)
 
-    return o_sheet, headers
+    return o_sheet, headers, offset
 
 
 def update_row_summary(row,
@@ -261,19 +274,21 @@ def dump_entries(rows, csv_headers, align=True):
     return output_list
 
 
-def do_dump(o_sheet, headers):
+def do_dump(o_sheet, headers, offset):
     counties = {}
     companies = {}
-    for row in range(o_sheet.max_row - 3):
-        county = o_sheet.cell(row=row+2, column=headers["County/Parish"]).value
+    for row in range(o_sheet.max_row - 1 - offset):
+        county = o_sheet.cell(row=row+2+offset, column=headers["County/Parish"]).value
+        if not county or county == "Report Summary":
+            break
         if county not in counties:
             counties[county] = 0
         counties[county] += 1
-        company = o_sheet.cell(row=row+2, column=headers["Company"]).value
+        company = o_sheet.cell(row=row+2+offset, column=headers["Company"]).value
         if company not in companies:
             companies[company] = {}
-        action = o_sheet.cell(row=row+2, column=headers["Layoff/Closure"]).value
-        employees = o_sheet.cell(row=row+2, column=headers["No. Of Employees"]).value
+        action = o_sheet.cell(row=row+2+offset, column=headers["Layoff/Closure"]).value
+        employees = o_sheet.cell(row=row+2+offset, column=headers["No. Of Employees"]).value
         if action not in companies[company]:
             companies[company][action] = 0
         companies[company][action] += employees
@@ -401,7 +416,7 @@ def send_to_api(opts, output_list, list_size):
             sys.exit(1)
 
 
-def do_update(opts, o_sheet, headers):
+def do_update(opts, o_sheet, headers, offset):
     fname = opts.summary
     csv_headers = None
     rows = []
@@ -425,12 +440,13 @@ def do_update(opts, o_sheet, headers):
         # No headers yet? Copy the ones from the spreadsheet
         csv_headers = []
         for col in range(o_sheet.max_column):
-            o_cell = o_sheet.cell(row=1, column=col+1)
+            o_cell = o_sheet.cell(row=1+offset, column=col+1)
             header = o_cell.value
             header = header.replace("\n", " ")
             header = header.replace("/ ", "/")
             header = header.replace("  ", " ")
             csv_headers.append(header)
+        print("<%s>" % (csv_headers,))
     else:
         if len(csv_headers) != o_sheet.max_column:
             print("Number of columns mismatch between existing data and new data.")
@@ -443,11 +459,15 @@ def do_update(opts, o_sheet, headers):
     newrows = []
     dupes_total = 0
     updates_total = 0
-    for row in range(o_sheet.max_row - 3):
+    for row in range(o_sheet.max_row - 1 - offset):
         newrow = []
         hashed = hashlib.sha256()
+        # Pre-check, to abort if we've reached the end of useful data in the sheet
+        county = o_sheet.cell(row=row+2+offset, column=headers["County/Parish"]).value
+        if not county or county == "Report Summary":
+            break
         for header in csv_headers:
-            value = o_sheet.cell(row=row+2, column=headers[header]).value
+            value = o_sheet.cell(row=row+2+offset, column=headers[header]).value
             if isinstance(value, datetime.datetime):
                 value = value.strftime("%Y-%m-%d")
             else:
@@ -531,8 +551,8 @@ def report_handler(_event, _lambda_context):
     opts.verbose = True
     opts.post = True
     opts.sqs = sqs_url
-    o_sheet, headers = load_report(opts)
-    do_update(opts, o_sheet, headers)
+    o_sheet, headers, offset = load_report(opts)
+    do_update(opts, o_sheet, headers, offset)
 
     # Upload the (potentially) updated spreadsheet and CSV file to S3
     bucket.upload_file('warn_report.xlsx', 'CA/warn_report.xlsx')
@@ -543,17 +563,18 @@ def main():
     opts = parse_options()
 
     if opts.dump:
-        o_sheet, headers = load_report(opts)
-        return do_dump(o_sheet, headers)
+        o_sheet, headers, offset = load_report(opts)
+        return do_dump(o_sheet, headers, offset)
     if opts.fetch:
         return do_fetch(opts)
     if opts.search:
         return do_search(opts)
     if opts.update:
-        o_sheet, headers = load_report(opts)
-        return do_update(opts, o_sheet, headers)
+        o_sheet, headers, offset = load_report(opts)
+        return do_update(opts, o_sheet, headers, offset)
     print("Not Yet Implemented.")
     return False
+
 
 if __name__ == "__main__":
     main()
