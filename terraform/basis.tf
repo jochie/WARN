@@ -14,6 +14,18 @@ resource "aws_s3_bucket_acl" "warn_bucket" {
   bucket = aws_s3_bucket.warn_bucket.id
 
   acl = "private"
+  depends_on = [aws_s3_bucket_ownership_controls.warn_bucket]
+}
+
+# https://stackoverflow.com/questions/76049290/error-accesscontrollistnotsupported-when-trying-to-create-a-bucket-acl-in-aws
+# Resource to avoid error "AccessControlListNotSupported: The bucket does not allow ACLs"
+#
+# May also be fixed by upgrading to a newer Terraform version (3.10.1?)
+resource "aws_s3_bucket_ownership_controls" "warn_bucket" {
+  bucket = aws_s3_bucket.warn_bucket.id
+  rule {
+    object_ownership = "ObjectWriter"
+  }
 }
 
 ######################################################################
