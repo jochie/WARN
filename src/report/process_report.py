@@ -150,16 +150,16 @@ def update_row_summary(row,
                        company_col, county_col, address_col, effective_col):
     if len(last_counties) > 1:
         row[county_col] = ", ".join(last_counties.keys())
-        row[address_col] = "[Multiple]"
+        row[address_col] = f"[Multiple ({len(last_addresses)})]"
     else:
         if len(last_addresses) > 1:
-            row[address_col] = "[Multiple]"
+            row[address_col] = f"[Multiple ({len(last_addresses)})]"
     if len(last_effective) > 1:
         dates = list(last_effective.keys())
         dates.sort()
         row[effective_col] = f"{dates[0]} - {dates[-1]}"
     if len(last_companies) > 1:
-        row[company_col] = f"{last_company} [Multiple variations]"
+        row[company_col] = f"{last_company} [Multiple variations ({len(last_companies)})]"
 
 
 # Sort (first by Notice Date and then by Company name) and group the
@@ -185,7 +185,7 @@ def group_entries(rows, csv_headers):
     notice_col    = headers["Notice Date"]
     company_col   = headers["Company"]
     county_col    = headers["County/Parish"]
-    received_col  = headers['Received Date']
+    processed_col = headers['Processed Date']
     effective_col = headers['Effective Date']
     layoff_col    = headers["Layoff/Closure"]
     address_col   = headers['Address']
@@ -199,14 +199,17 @@ def group_entries(rows, csv_headers):
     last_effective = {}
     for row in sorted(rows, key=itemgetter(notice_col, company_col)):
         eff_company = row[company_col]
+        match_google = re.match(r"^Google US-(.*)", eff_company)
+        if match_google:
+            eff_company = "Google US"
         match_company = re.match(r"^(.*) - (.*)$", eff_company)
         if match_company:
             eff_company = match_company.group(1)
 
-        if len(last_row) > 0 and (row[notice_col]   != last_row[notice_col] or
-                                  eff_company       != last_company or
-                                  row[received_col] != last_row[received_col] or
-                                  row[layoff_col]   != last_row[layoff_col]):
+        if len(last_row) > 0 and (row[notice_col]     != last_row[notice_col] or
+                                  eff_company.lower() != last_company.lower() or
+                                  row[processed_col]  != last_row[processed_col] or
+                                  row[layoff_col]     != last_row[layoff_col]):
             # We cannot combine this row into the previous one
             update_row_summary(last_row,
                                last_company,
@@ -428,6 +431,10 @@ def do_update(opts, o_sheet, headers, offset):
             for row in reader:
                 if csv_headers is None:
                     csv_headers = row
+                    for i, col in enumerate(row):
+                        if col == "Received Date":
+                            # Migrate from Received Date to Processed Date
+                            row[i] = "Processed Date"
                 else:
                     rows.append(row)
                     hashed = hashlib.sha256()
