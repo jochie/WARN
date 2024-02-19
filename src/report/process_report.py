@@ -104,7 +104,6 @@ def load_report(opts):
 
     # Get All Sheets
     a_sheet_names = workbook.sheetnames
-    # print(a_sheet_names)
 
     # Look for "Detailed WARN Report" sheet (actual sheet has an extra space).
     # If none found, use the first sheet and hope for the best.
@@ -118,9 +117,6 @@ def load_report(opts):
         print('Using sheet name <%s>' % (sheet_name,))
 
     o_sheet = workbook[sheet_name]
-    # print(o_sheet)
-    # print(o_sheet.max_row)
-    # print(o_sheet.max_column)
     headers = {}
     for col in range(o_sheet.max_column):
         o_cell = o_sheet.cell(row=1+offset, column=col+1)
@@ -129,7 +125,6 @@ def load_report(opts):
         header = header.replace("/ ", "/")
         header = header.replace("  ", " ")
         headers[header] = col + 1
-        # print(f"(1,{col+1}) = {header}")
     if opts.debug:
         print(json.dumps(headers))
 
