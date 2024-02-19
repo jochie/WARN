@@ -11,7 +11,7 @@ variable "src" {
 
 resource "null_resource" "install_report_dependencies" {
   provisioner "local-exec" {
-    command = "rm -fr ${var.src}report/packaging; pip install -r ${var.src}report/requirements.txt -t ${var.src}report/packaging/"
+    command = "rm -fr ${var.src}report/packaging; pip3 install -r ${var.src}report/requirements.txt -t ${var.src}report/packaging/"
   }
   triggers = {
     dependencies_versions = filemd5("${var.src}report/requirements.txt")
@@ -83,7 +83,7 @@ resource "aws_lambda_function" "report" {
   handler = "process_report.report_handler"
   runtime = "python3.8"
   publish = true
-  timeout = 10
+  timeout = 30
 
   environment {
     variables = {
@@ -252,7 +252,7 @@ resource "aws_lambda_function" "post" {
   runtime = "python3.8"
   source_code_hash = filebase64sha256(data.archive_file.post.output_path)
   publish = true
-  timeout = 10
+  timeout = 30
 }
 
 # Attach cloudwatch logging permissions and S3 access permissions to
