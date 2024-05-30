@@ -121,10 +121,15 @@ def load_report(opts):
     for col in range(o_sheet.max_column):
         o_cell = o_sheet.cell(row=1+offset, column=col+1)
         header = o_cell.value
+        if header is None or len(header) == 0:
+            # Break out of the loop if we get a header without content
+            # or empty content
+            break
         header = header.replace("\n", " ")
         header = header.replace("/ ", "/")
         header = header.replace("  ", " ")
         headers[header] = col + 1
+        useful_columns = col + 1
     if opts.debug:
         print(json.dumps(headers))
 
@@ -136,7 +141,7 @@ def load_report(opts):
         print("Missing Notice Date column, aborting.")
         sys.exit(1)
 
-    return o_sheet, headers, offset
+    return o_sheet, headers, offset, useful_columns
 
 
 def update_row_summary(row,
@@ -414,7 +419,7 @@ def send_to_api(opts, output_list, list_size):
             sys.exit(1)
 
 
-def do_update(opts, o_sheet, headers, offset):
+def do_update(opts, o_sheet, headers, offset, useful_columns):
     fname = opts.summary
     csv_headers = None
     rows = []
@@ -441,7 +446,7 @@ def do_update(opts, o_sheet, headers, offset):
     if csv_headers is None:
         # No headers yet? Copy the ones from the spreadsheet
         csv_headers = []
-        for col in range(o_sheet.max_column):
+        for col in range(useful_columns):
             o_cell = o_sheet.cell(row=1+offset, column=col+1)
             header = o_cell.value
             header = header.replace("\n", " ")
@@ -450,7 +455,7 @@ def do_update(opts, o_sheet, headers, offset):
             csv_headers.append(header)
         print("<%s>" % (csv_headers,))
     else:
-        if len(csv_headers) != o_sheet.max_column:
+        if len(csv_headers) != useful_columns:
             print("Number of columns mismatch between existing data and new data.")
             sys.exit(1)
         for header in csv_headers:
@@ -553,8 +558,8 @@ def report_handler(_event, _lambda_context):
     opts.verbose = True
     opts.post = True
     opts.sqs = sqs_url
-    o_sheet, headers, offset = load_report(opts)
-    do_update(opts, o_sheet, headers, offset)
+    o_sheet, headers, offset, useful_columns = load_report(opts)
+    do_update(opts, o_sheet, headers, offset, useful_columns)
 
     # Upload the (potentially) updated spreadsheet and CSV file to S3
     bucket.upload_file('warn_report.xlsx', 'CA/warn_report.xlsx')
@@ -572,8 +577,8 @@ def main():
     if opts.search:
         return do_search(opts)
     if opts.update:
-        o_sheet, headers, offset = load_report(opts)
-        return do_update(opts, o_sheet, headers, offset)
+        o_sheet, headers, offset, useful_columns = load_report(opts)
+        return do_update(opts, o_sheet, headers, offset, useful_columns)
     print("Not Yet Implemented.")
     return False
 
