@@ -81,7 +81,7 @@ resource "aws_lambda_function" "report" {
   filename = data.archive_file.report.output_path
   source_code_hash = data.archive_file.report.output_base64sha256
   handler = "process_report.report_handler"
-  runtime = "python3.8"
+  runtime = "python3.9"
   publish = true
   timeout = 30
 
@@ -249,7 +249,7 @@ resource "aws_lambda_function" "post" {
   function_name = "post"
   role = aws_iam_role.post.arn
   handler = "process_posts.posts_handler"
-  runtime = "python3.8"
+  runtime = "python3.9"
   source_code_hash = data.archive_file.post.output_base64sha256
   publish = true
   timeout = 30
