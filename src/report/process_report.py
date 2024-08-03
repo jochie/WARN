@@ -11,10 +11,11 @@ import os
 import re
 import sys
 import time
-import urllib3
+import warnings
 
 import boto3
 import openpyxl
+import urllib3
 
 # WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report.xlsx'
 WARN_URL  = 'https://edd.ca.gov/siteassets/files/jobs_and_training/warn/warn_report1.xlsx'
@@ -100,7 +101,12 @@ https://edd.ca.gov/en/jobs_and_training/Layoff_Services_WARN
 
 
 def load_report(opts):
-    workbook = openpyxl.load_workbook(filename=opts.excel, data_only=True)
+    with warnings.catch_warnings():
+        # This is just to suppress this (irrelevant to me) warnings
+        # .../openpyxl/worksheet/_reader.py:329:
+        #     UserWarning: Data Validation extension is not supported and will be removed
+        warnings.filterwarnings("ignore", category=UserWarning)
+        workbook = openpyxl.load_workbook(filename=opts.excel, data_only=True)
 
     # Get All Sheets
     a_sheet_names = workbook.sheetnames
@@ -570,7 +576,7 @@ def main():
     opts = parse_options()
 
     if opts.dump:
-        o_sheet, headers, offset = load_report(opts)
+        o_sheet, headers, offset, _ = load_report(opts)
         return do_dump(o_sheet, headers, offset)
     if opts.fetch:
         return do_fetch(opts)
