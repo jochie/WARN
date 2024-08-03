@@ -431,22 +431,42 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
     rows = []
     dupes = {}
 
+    # During the same run where we add the header, we need to ignore
+    # it for the duplicate checking because the new spreadsheet added
+    # it retroactively for rows we've already processed and posted
+    # previously.
+    #
+    # Afterward we do add that new information to the existing rows so
+    # that the next time, when the new column does exist already, our
+    # duplicate checking doesn't go haywire in spite of it all.
+    ri_added = False
+
     try:
         with open(fname, newline='') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if csv_headers is None:
+                    ri_seen = False
                     csv_headers = row
                     for i, col in enumerate(row):
                         if col == "Received Date":
                             # Migrate from Received Date to Processed Date
                             row[i] = "Processed Date"
+                        elif col == "Related Industry":
+                            ri_seen = True
+                    # Migration step, because the "Related Industry"
+                    # column did not exist when I started tracking
+                    # this in 2023.
+                    if "Related Industry" in headers and not ri_seen:
+                        print("Adding 'Related Industry' to CSV headers.")
+                        csv_headers.append("Related Industry")
+                        ri_added = True
                 else:
                     rows.append(row)
                     hashed = hashlib.sha256()
                     for col in row:
                         hashed.update(col.encode("utf-8"))
-                    dupes[hashed.digest()] = True
+                    dupes[hashed.digest()] = len(rows) - 1
     except IOError:
         print(f"File {csv} did not exist yet.")
     if csv_headers is None:
@@ -472,6 +492,7 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
     newrows = []
     dupes_total = 0
     updates_total = 0
+    merged_total = 0
     for row in range(o_sheet.max_row - 1 - offset):
         newrow = []
         hashed = hashlib.sha256()
@@ -486,19 +507,26 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
             else:
                 value = str(value)
             newrow.append(value)
-            hashed.update(value.encode("utf-8"))
+            if not ri_added or header != "Related Industry":
+                hashed.update(value.encode("utf-8"))
         digest = hashed.digest()
-        if digest not in dupes:
-            dupes[digest] = True
+        if digest in dupes:
+            if ri_added:
+                # Backfill this entry in the original CSV row, so that
+                # future duplicate checking will work
+                value = o_sheet.cell(row=row+2+offset, column=headers["Related Industry"]).value
+                rows[dupes[digest]].append(str(value))
+                merged_total += 1
+            dupes_total += 1
+        else:
             if opts.debug:
                 print(f"New row: {newrow}")
             rows.append(newrow)
+            dupes[digest] = len(rows) - 1
             newrows.append(newrow)
             updates_total += 1
-        else:
-            dupes_total += 1
     if opts.debug:
-        print(f"{dupes_total} existing rows, {updates_total} new rows.")
+        print(f"{dupes_total} existing rows, {merged_total} merged rows, {updates_total} new rows.")
     if updates_total > 0:
         tmp_fname = f"{fname}.{os.getpid()}"
         if opts.debug:
