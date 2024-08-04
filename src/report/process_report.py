@@ -120,7 +120,7 @@ def load_report(opts):
             sheet_name = name
             offset = 1
     if opts.debug:
-        print('Using sheet name <%s>' % (sheet_name,))
+        print(f"Using sheet name <{sheet_name}>")
 
     o_sheet = workbook[sheet_name]
     headers = {}
@@ -332,7 +332,7 @@ def do_search(opts):
     rows = []
 
     try:
-        with open(fname, newline='') as csvfile:
+        with open(fname, newline='', encoding="utf-8") as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if csv_headers is None:
@@ -442,7 +442,7 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
     ri_added = False
 
     try:
-        with open(fname, newline='') as csvfile:
+        with open(fname, newline='', encoding="utf-8") as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
                 if csv_headers is None:
@@ -479,7 +479,7 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
             header = header.replace("/ ", "/")
             header = header.replace("  ", " ")
             csv_headers.append(header)
-        print("<%s>" % (csv_headers,))
+        print(f"<{csv_headers}>")
     else:
         if len(csv_headers) != useful_columns:
             print("Number of columns mismatch between existing data and new data.")
@@ -531,7 +531,7 @@ def do_update(opts, o_sheet, headers, offset, useful_columns):
         tmp_fname = f"{fname}.{os.getpid()}"
         if opts.debug:
             print(f"Creating temporary file {tmp_fname}.")
-        with open(tmp_fname, 'w', newline='') as csvfile:
+        with open(tmp_fname, 'w', newline='', encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(csv_headers)
             for row in rows:
